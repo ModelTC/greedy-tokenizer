@@ -1,0 +1,2 @@
+general-sam>=0.5.3
+transformers

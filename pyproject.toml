@@ -1,0 +1,22 @@
+[project]
+name = "greedy-tokenizer"
+description = "Greedily tokenize strings with the longest tokens iteratively."
+
+version = "1.0.0"
+
+requires-python = ">=3.8"
+dependencies = ["general-sam>=0.5.3", "transformers"]
+
+authors = [
+  { name = "Chielo Newctle", email = "ChieloNewctle@gmail.com" },
+  { name = "ModelTC Team" },
+]
+license = { text = "MIT OR Apache-2.0" }
+readme = "README.md"
+
+[project.urls]
+Homepage = "https://github.com/ModelTC/greedy-tokenizer"
+Repository = "https://github.com/ModelTC/greedy-tokenizer.git"
+
+[project.optional-dependencies]
+test = ["pytest", "datasets"]
