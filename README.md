@@ -1,7 +1,8 @@
 # Greedy Tokenizer
 
-[![Source File](https://img.shields.io/badge/source_file-greedy__tokenizer.py-green)](./greedy_tokenizer.py)
+[![Source file](https://img.shields.io/badge/source_file-greedy__tokenizer.py-green)](./greedy_tokenizer.py)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-informational.svg)](#license)
+[![Build status](https://github.com/ModelTC/greedy-tokenizer/actions/workflows/ci.yml/badge.svg)](https://github.com/ModelTC/greedy-tokenizer/actions)
 
 Greedily tokenize strings with the longest tokens iteratively,
 compatible with `transformers.PretrainedTokenizer` and `transformers.AutoTokenizer`.
