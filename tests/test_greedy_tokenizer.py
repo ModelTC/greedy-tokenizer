@@ -7,6 +7,7 @@
 # at your option.
 
 import os
+import json
 from tempfile import TemporaryDirectory
 from typing import Sequence
 
@@ -20,16 +21,19 @@ from greedy_tokenizer import GreedyTokenizer, UTF8Buffer
 def mock_other_tokenizer(**kwargs):
     kwargs.setdefault("add_bos_token", False)
     kwargs.setdefault("add_eos_token", False)
-    name = os.getenv("SP_TOKENIZER") or "codellama/CodeLlama-7b-Instruct-hf"
-    old_tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(name)
+    name = os.getenv("OLD_TOKENIZER", "codellama/CodeLlama-7b-Instruct-hf")
+    old_kwargs = json.loads(os.getenv("OLD_TOKENIZER_KWARGS", "{}"))
+    old_tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
+        name, **old_kwargs
+    )
     return old_tokenizer, GreedyTokenizer.mock_tokenizer(old_tokenizer, **kwargs)
 
 
 def load_dataset() -> Sequence[str]:
-    name = os.getenv("DATASET") or "Trelis/tiny-shakespeare"
-    split_name = os.getenv("SPLIT") or "train"
+    name = os.getenv("DATASET", "Trelis/tiny-shakespeare")
+    split_name = os.getenv("SPLIT", "train")
     d = datasets.load_dataset(name, split=split_name)  # pyright: ignore
-    column_name = os.getenv("COLUMN") or d.column_names[0]  # pyright: ignore
+    column_name = os.getenv("COLUMN", d.column_names[0])  # pyright: ignore
     return d[column_name]  # pyright: ignore
 
 
