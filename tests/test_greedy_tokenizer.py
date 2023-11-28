@@ -18,7 +18,21 @@ from transformers import AutoTokenizer, PreTrainedTokenizer
 from greedy_tokenizer import GreedyTokenizer, UTF8Buffer
 
 
-def mock_other_tokenizer(**kwargs):
+try:
+    from greedy_tokenizer import GreedyTokenizerFast
+
+    pytestmark = pytest.mark.parametrize(
+        "factory", [GreedyTokenizer, GreedyTokenizerFast]
+    )
+except ImportError:
+    GreedyTokenizerFast = None
+    pytestmark = pytest.mark.parametrize("factory", [GreedyTokenizer])
+
+
+FAST_BYTE_FALLBACK = "�"
+
+
+def mock_other_tokenizer(factory, **kwargs):
     kwargs.setdefault("add_bos_token", False)
     kwargs.setdefault("add_eos_token", False)
     name = os.getenv("OLD_TOKENIZER", "codellama/CodeLlama-7b-Instruct-hf")
@@ -26,7 +40,7 @@ def mock_other_tokenizer(**kwargs):
     old_tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
         name, **old_kwargs
     )
-    return old_tokenizer, GreedyTokenizer.mock_tokenizer(old_tokenizer, **kwargs)
+    return old_tokenizer, factory.mock_tokenizer(old_tokenizer, **kwargs)
 
 
 def load_dataset() -> Sequence[str]:
@@ -37,34 +51,36 @@ def load_dataset() -> Sequence[str]:
     return d[column_name]  # pyright: ignore
 
 
-def test_store_and_load():
-    _, tokenizer = mock_other_tokenizer()
+def test_store_and_load(factory):
+    _, tokenizer = mock_other_tokenizer(factory)
 
     with TemporaryDirectory() as dir_name:
         paths = tokenizer.save_pretrained(dir_name)
         vocab_path = next(
-            i
-            for i in paths
-            if i.endswith(GreedyTokenizer.GREEDY_TOKENIZER_VOCAB_FILE_NAME)
+            i for i in paths if i.endswith(factory.GREEDY_TOKENIZER_VOCAB_FILE_NAME)
         )
 
-        auto_tokenizer = AutoTokenizer.from_pretrained(dir_name, trust_remote_code=True)
-        from_pretrained = GreedyTokenizer.from_pretrained(dir_name)
-        from_vocab = GreedyTokenizer(vocab_path=vocab_path)
+        auto_tokenizer = AutoTokenizer.from_pretrained(
+            dir_name,
+            trust_remote_code=True,
+            use_fast=factory != GreedyTokenizer,
+        )
+        from_pretrained = factory.from_pretrained(dir_name)
+        from_vocab = factory(vocab_path=vocab_path)
 
     assert type(auto_tokenizer).__module__ != "greedy_tokenizer"
-    assert type(auto_tokenizer).__name__ == "GreedyTokenizer"
+    assert type(auto_tokenizer).__name__ == factory.__name__
 
     assert type(from_pretrained).__module__ == "greedy_tokenizer"
-    assert type(from_pretrained).__name__ == "GreedyTokenizer"
+    assert type(from_pretrained).__name__ == factory.__name__
 
     assert auto_tokenizer.vocab == tokenizer.vocab
     assert from_pretrained.vocab == tokenizer.vocab
     assert from_vocab.vocab == tokenizer.vocab
 
 
-def test_unk_token():
-    t = GreedyTokenizer(
+def test_unk_token(factory):
+    t = factory(
         vocab=["<unk>", "Hello", "world", " ", ",", ".", "!"],
         unk_token="<unk>",
     )
@@ -72,20 +88,26 @@ def test_unk_token():
     assert t.tokenize("Hello, world!") == ["Hello", ",", " ", "world", "!"]
     assert t.tokenize("Goodbye, world.") == ["<unk>", ",", " ", "world", "."]
 
-    assert t.convert_tokens_to_string(["<unk>", "<unk>"]) == "<unk>"
+    if isinstance(t, GreedyTokenizer):
+        assert t.convert_tokens_to_string(["<unk>", "<unk>"]) == "<unk>"
 
 
-def test_decode_invalid_utf8():
-    t = GreedyTokenizer(
+def test_decode_invalid_utf8(factory):
+    t = factory(
         vocab=["<unk>", "<0xe4>", "<0xbd>", "<0xff>", "hello", "<0x123>"],
         unk_token="<unk>",
     )
 
-    def case(seq):
+    def case_slow(seq):
         assert t.convert_tokens_to_string([*seq]) == "<unk>"
         assert t.convert_tokens_to_string(["hello", *seq]) == "hello<unk>"
         assert t.convert_tokens_to_string([*seq, "hello"]) == "<unk>hello"
         assert t.convert_tokens_to_string(["hello", *seq, "hello"]) == "hello<unk>hello"
+
+    def case_fast(seq):
+        assert t.convert_tokens_to_string([*seq]) == FAST_BYTE_FALLBACK * len(seq)
+
+    case = case_slow if factory == GreedyTokenizer else case_fast
 
     case(["<0xe4>", "<0xbd>"])
     case(["<0xff>"])
@@ -95,14 +117,14 @@ def test_decode_invalid_utf8():
     assert t.convert_tokens_to_string(["<0x123>"]) == "<0x123>"
 
 
-def test_empty_token():
-    t = GreedyTokenizer(vocab=["Hello", "", "world", " ", ",", "", ".", "!"])
+def test_empty_token(factory):
+    t = factory(vocab=["Hello", "", "world", " ", ",", "", ".", "!"])
 
     assert t.tokenize("Hello, world!") == ["Hello", ",", " ", "world", "!"]
 
 
-def test_tokenize_dataset():
-    sp_tokenizer, gt_tokenizer = mock_other_tokenizer()
+def test_tokenize_dataset(factory):
+    sp_tokenizer, gt_tokenizer = mock_other_tokenizer(factory)
 
     assert gt_tokenizer.vocab_size == sp_tokenizer.vocab_size
 
@@ -132,13 +154,44 @@ def test_tokenize_dataset():
     print(f"{tot_num_sp=} {tot_num_gt=} {exceeded_ratio * 100.0=:.2}%")
 
 
-def test_exceptions():
-    with pytest.raises(TypeError):
-        GreedyTokenizer()
+def test_encode_and_decode_dataset(factory):
+    _, gt_tokenizer = mock_other_tokenizer(
+        factory, add_bos_token=False, add_eos_token=False
+    )
+    if GreedyTokenizerFast:
+        _, gt_tokenizer_alter = mock_other_tokenizer(
+            {
+                GreedyTokenizer: GreedyTokenizerFast,
+                GreedyTokenizerFast: GreedyTokenizer,
+            }[factory],
+            add_bos_token=False,
+            add_eos_token=False,
+        )
 
-    with pytest.raises(UnicodeDecodeError):
-        t = GreedyTokenizer(vocab=["<0xff>"])
-        t.convert_tokens_to_string(["<0xff>"])
+        assert gt_tokenizer.vocab_size == gt_tokenizer_alter.vocab_size
+    else:
+        gt_tokenizer_alter = None
+
+    for item in load_dataset():
+        token_ids = gt_tokenizer.encode(item)
+        assert gt_tokenizer.decode(token_ids) == item
+
+        if gt_tokenizer_alter:
+            assert gt_tokenizer_alter.encode(item) == token_ids
+            assert gt_tokenizer_alter.decode(token_ids) == item
+
+
+def test_exceptions(factory):
+    with pytest.raises(TypeError):
+        factory()
+
+    if factory == GreedyTokenizer:
+        with pytest.raises(UnicodeDecodeError):
+            t = factory(vocab=["<0xff>"])
+            t.convert_tokens_to_string(["<0xff>"])
+    else:
+        t = factory(vocab=["<0xff>"])
+        assert t.convert_tokens_to_string(["<0xff>"]) == FAST_BYTE_FALLBACK
 
     buffer = UTF8Buffer("<unk>")
     buffer.push_byte(-1)
@@ -146,19 +199,23 @@ def test_exceptions():
     assert buffer.pop_chars() == "<unk>"
 
     with TemporaryDirectory() as dir_name:
-        t = GreedyTokenizer(vocab=[])
+        t = factory(vocab=[])
         paths = t.save_pretrained(dir_name, filename_prefix="t")
         assert any(
             "t-" + GreedyTokenizer.GREEDY_TOKENIZER_VOCAB_FILE_NAME in p for p in paths
         )
 
 
-def test_bos_eos():
+@pytest.mark.parametrize("add_bos_token", [True, False])
+@pytest.mark.parametrize("add_eos_token", [True, False])
+def test_bos_eos(factory, add_bos_token, add_eos_token):
     def get_tokenizer(**kwargs):
         def sub_bos_and_eos(token_id: int, token: str, _: bool) -> str:
             return {1: "<s>", 2: "</s>"}.get(token_id, token)
 
-        _, tokenizer = mock_other_tokenizer(proc_token=sub_bos_and_eos, **kwargs)
+        _, tokenizer = mock_other_tokenizer(
+            factory, proc_token=sub_bos_and_eos, **kwargs
+        )
 
         if tokenizer.bos_token_id is None:
             tokenizer.bos_token = "<s>"
@@ -168,36 +225,20 @@ def test_bos_eos():
 
         return tokenizer
 
-    tokenizer = get_tokenizer(add_bos_token=True, add_eos_token=False)
+    t = get_tokenizer(add_bos_token=add_bos_token, add_eos_token=add_eos_token)
 
-    res = tokenizer.encode("xyz")
-    assert res.count(tokenizer.bos_token_id) == 1  # pyright: ignore
-    assert res.count(tokenizer.eos_token_id) == 0  # pyright: ignore
-    res = tokenizer.encode("uvw", "ijk")
-    assert res.count(tokenizer.bos_token_id) == 2  # pyright: ignore
-    assert res.count(tokenizer.eos_token_id) == 0  # pyright: ignore
-
-    tokenizer = get_tokenizer(add_bos_token=True, add_eos_token=True)
-
-    res = tokenizer.encode("xyz")
-    assert res.count(tokenizer.bos_token_id) == 1  # pyright: ignore
-    assert res.count(tokenizer.eos_token_id) == 1  # pyright: ignore
-    res = tokenizer.encode("uvw", "ijk")
-    assert res.count(tokenizer.bos_token_id) == 2  # pyright: ignore
-    assert res.count(tokenizer.eos_token_id) == 2  # pyright: ignore
-
-    tokenizer = get_tokenizer(add_bos_token=False, add_eos_token=True)
-
-    res = tokenizer.encode("xyz")
-    assert res.count(tokenizer.bos_token_id) == 0  # pyright: ignore
-    assert res.count(tokenizer.eos_token_id) == 1  # pyright: ignore
-    res = tokenizer.encode("uvw", "ijk")
-    assert res.count(tokenizer.bos_token_id) == 0  # pyright: ignore
-    assert res.count(tokenizer.eos_token_id) == 2  # pyright: ignore
+    res = t.encode("xyz")
+    assert (res[0] == t.bos_token_id) == add_bos_token  # pyright: ignore
+    assert (res[-1] == t.eos_token_id) == add_eos_token  # pyright: ignore
+    res = t.encode("uvw", "ijk")
+    assert res.count(t.bos_token_id) == int(add_bos_token) * 2  # pyright: ignore
+    assert res.count(t.eos_token_id) == int(add_eos_token) * 2  # pyright: ignore
 
 
-def test_decode_special_tokens():
-    _, tokenizer = mock_other_tokenizer(add_bos_token=False, add_eos_token=False)
+def test_decode_special_tokens(factory):
+    _, tokenizer = mock_other_tokenizer(
+        factory, add_bos_token=False, add_eos_token=False
+    )
     tokenizer._add_tokens(["<wow>", "<yeah>"], special_tokens=True)
 
     def proc(s):
@@ -205,3 +246,33 @@ def test_decode_special_tokens():
 
     assert proc("ab<wow>cd<yeah>ef") == "ab<wow>cd<yeah>ef"
     assert proc("\n \t<wow> <yeah>\t \n") == "\n \t<wow> <yeah>\t \n"
+
+
+def test_fast_can_save_slow(factory):
+    _, tokenizer = mock_other_tokenizer(factory)
+
+    if GreedyTokenizerFast and isinstance(tokenizer, GreedyTokenizerFast):
+        assert tokenizer.can_save_slow_tokenizer
+
+
+@pytest.mark.parametrize("add_bos_token", [True, False])
+@pytest.mark.parametrize("add_eos_token", [True, False])
+def test_save_and_load_different_mode(factory, add_bos_token, add_eos_token):
+    _, tokenizer_a = mock_other_tokenizer(
+        factory, add_bos_token=add_bos_token, add_eos_token=add_eos_token
+    )
+
+    with TemporaryDirectory() as dir_name:
+        tokenizer_a.save_pretrained(dir_name)
+        use_fast = False if factory == GreedyTokenizerFast else True
+        tokenizer_b = AutoTokenizer.from_pretrained(
+            dir_name, use_fast=use_fast, trust_remote_code=True
+        )
+
+        assert tokenizer_b.add_bos_token == add_bos_token
+        assert tokenizer_b.add_eos_token == add_eos_token
+
+    if factory == GreedyTokenizerFast:
+        assert type(tokenizer_a).__name__ != type(tokenizer_b).__name__
+    else:
+        assert type(tokenizer_a).__name__ == type(tokenizer_b).__name__
