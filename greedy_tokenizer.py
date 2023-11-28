@@ -17,19 +17,38 @@
 import copy
 import json
 import re
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, cast
 
 from general_sam import GeneralSAM, build_trie_from_bytes
 from general_sam import GreedyTokenizer as GreedyTokenizerBase
+from tokenizers import Tokenizer
 from transformers import (
     AddedToken,
     AutoTokenizer,
     PreTrainedTokenizer,
     PreTrainedTokenizerBase,
+    PreTrainedTokenizerFast,
+)
+from transformers.convert_slow_tokenizer import (
+    SLOW_TO_FAST_CONVERTERS,
+    Converter,
+    decoders,
+    processors,
 )
 
-BYTE_REPR_RE = re.compile(r"<0[xX][0-9a-fA-F]{2}>")
+try:
+    from tokenizers.models import GreedyTokenizer as GreedyTokenizerModel
+except ImportError:
+    warnings.warn(
+        "GreedyTokenizerFast will be disabled, "
+        "as GreedyTokenizer is not found in `tokenizers.models`"
+    )
+    GreedyTokenizerModel = None
+
+
+BYTE_REPR_RE = re.compile(r"<0x[0-9a-fA-F]{2}>")
 
 
 class UTF8Buffer(object):
@@ -117,14 +136,7 @@ class UTF8Buffer(object):
             self._clean_byte_buffer()
 
 
-class GreedyTokenizer(PreTrainedTokenizer):
-    GREEDY_TOKENIZER_VOCAB_FILE_NAME = "vocab.json"
-
-    vocab_files_names = {
-        "vocab_path": GREEDY_TOKENIZER_VOCAB_FILE_NAME,
-        **PreTrainedTokenizer.vocab_files_names,
-    }
-
+class MockMixin(object):
     @classmethod
     def from_other_pretrained(
         cls, *args, mock_kwargs: Optional[Mapping[str, Any]] = None, **kwargs
@@ -143,7 +155,7 @@ class GreedyTokenizer(PreTrainedTokenizer):
         **kwargs,
     ):
         old_vocab = old_tokenizer.get_vocab()
-        vocab_seq = [""] * (max(old_vocab.values()) + 1)
+        vocab_seq = [""] * (max(old_vocab.values() or (0,)) + 1)
 
         _proc_token = proc_token or (lambda *args: args[1])  # pyright: ignore
 
@@ -192,6 +204,15 @@ class GreedyTokenizer(PreTrainedTokenizer):
 
         return cls(vocab=vocab_seq, **kwargs)
 
+
+class GreedyTokenizer(PreTrainedTokenizer, MockMixin):
+    GREEDY_TOKENIZER_VOCAB_FILE_NAME = "vocab.json"
+
+    vocab_files_names = {
+        "vocab_path": GREEDY_TOKENIZER_VOCAB_FILE_NAME,
+        **PreTrainedTokenizer.vocab_files_names,
+    }
+
     def __init__(
         self,
         vocab_path: Optional[str] = None,
@@ -200,6 +221,8 @@ class GreedyTokenizer(PreTrainedTokenizer):
         add_eos_token=False,
         **kwargs,
     ):
+        kwargs.setdefault("clean_up_tokenization_spaces", False)
+
         self.vocab_path = vocab_path
 
         if vocab_path is None and vocab is None:
@@ -418,3 +441,125 @@ class GreedyTokenizer(PreTrainedTokenizer):
 
 
 GreedyTokenizer.register_for_auto_class()
+
+
+if GreedyTokenizerModel is not None:
+
+    class GTConverter(Converter):
+        def converted(self) -> Tokenizer:
+            assert GreedyTokenizerModel is not None
+
+            tokenizer = Tokenizer(
+                GreedyTokenizerModel(
+                    vocab=self.original_tokenizer.vocab,
+                    unk_token_id=self.original_tokenizer.unk_token_id,
+                    byte_fallback=True,
+                )
+            )
+
+            tokenizer.decoder = decoders.ByteFallback()  # pyright: ignore
+            self.add_post_processor(tokenizer)
+
+            return tokenizer
+
+        def add_post_processor(self, tokenizer):
+            template_special_tokens = []
+            prefix, suffix = [], []
+
+            if self.original_tokenizer.add_bos_token:
+                bos_token = str(self.original_tokenizer.bos_token)
+                bos_token_id = self.original_tokenizer.bos_token_id
+                prefix.append(bos_token)
+                template_special_tokens.append((bos_token, bos_token_id))
+
+            if self.original_tokenizer.add_eos_token:
+                eos_token = str(self.original_tokenizer.eos_token)
+                eos_token_id = self.original_tokenizer.eos_token_id
+                suffix.append(eos_token)
+                template_special_tokens.append((eos_token, eos_token_id))
+
+            part_a = " ".join(f"{i}:0" for i in prefix + ["$A"] + suffix)
+            part_b = " ".join(f"{i}:1" for i in prefix + ["$B"] + suffix)
+
+            tokenizer.post_processor = processors.TemplateProcessing(
+                single=part_a,
+                pair=f"{part_a} {part_b}",
+                special_tokens=template_special_tokens,
+            )
+
+    class GreedyTokenizerFast(PreTrainedTokenizerFast, MockMixin):
+        GREEDY_TOKENIZER_VOCAB_FILE_NAME = (
+            GreedyTokenizer.GREEDY_TOKENIZER_VOCAB_FILE_NAME
+        )
+
+        vocab_files_names = {
+            **PreTrainedTokenizerFast.vocab_files_names,
+            **GreedyTokenizer.vocab_files_names,
+        }
+        slow_tokenizer_class = GreedyTokenizer  # pyright: ignore
+
+        _auto_map = {"AutoTokenizer": ["GreedyTokenizer", "GreedyTokenizerFast"]}
+
+        def __init__(
+            self,
+            tokenizer_file=None,
+            add_bos_token=False,
+            add_eos_token=False,
+            **kwargs,
+        ):
+            SLOW_TO_FAST_CONVERTERS[GreedyTokenizer.__name__] = GTConverter
+
+            kwargs.setdefault("clean_up_tokenization_spaces", False)
+
+            super().__init__(
+                tokenizer_file=tokenizer_file,
+                add_bos_token=add_bos_token,
+                add_eos_token=add_eos_token,
+                **kwargs,
+            )
+
+            self.add_bos_token = add_bos_token
+            self.add_eos_token = add_eos_token
+
+        @property
+        def can_save_slow_tokenizer(self) -> bool:
+            return True
+
+        def save_vocabulary(
+            self, save_directory: str, filename_prefix: Optional[str] = None
+        ) -> Tuple[str]:
+            """
+            Save only the vocabulary of the tokenizer (vocabulary + added tokens).
+
+            This method won't save the configuration and special token mappings of the tokenizer. Use
+            [`~PreTrainedTokenizerFast._save_pretrained`] to save the whole state of the tokenizer.
+
+            Args:
+                save_directory (`str`):
+                    The directory in which to save the vocabulary.
+                filename_prefix (`str`, *optional*):
+                    An optional prefix to add to the named of the saved files.
+
+            Returns:
+                `Tuple(str)`: Paths to the files saved.
+            """
+            save_dir = Path(save_directory)
+
+            if filename_prefix is not None:
+                filename_prefix += "-"
+
+            vocab_file_name = (
+                filename_prefix or ""
+            ) + self.GREEDY_TOKENIZER_VOCAB_FILE_NAME
+            vocab_file_path = save_dir / vocab_file_name
+
+            vocab_seq = [""] * (max(self.vocab.values() or (0,)) + 1)
+            for k, v in self.vocab.items():
+                vocab_seq[v] = k
+
+            with open(vocab_file_path, "w") as f:
+                json.dump(vocab_seq, f)
+
+            return (str(vocab_file_path),)
+
+    GreedyTokenizerFast.register_for_auto_class()
