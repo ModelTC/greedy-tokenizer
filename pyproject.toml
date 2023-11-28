@@ -20,3 +20,4 @@ Repository = "https://github.com/ModelTC/greedy-tokenizer.git"
 
 [project.optional-dependencies]
 test = ["pytest", "datasets"]
+fast = ["tokenizers-gt"]
