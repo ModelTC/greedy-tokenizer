@@ -43,7 +43,8 @@ try:
 except ImportError:
     warnings.warn(
         "GreedyTokenizerFast will be disabled, "
-        "as GreedyTokenizer is not found in `tokenizers.models`"
+        "as GreedyTokenizer is not found in `tokenizers.models`. "
+        "Install `tokenizers-gt` from PyPI to enable it."
     )
     GreedyTokenizerModel = None
 
