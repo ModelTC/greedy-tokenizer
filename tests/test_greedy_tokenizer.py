@@ -239,10 +239,32 @@ def test_decode_special_tokens(factory):
     _, tokenizer = mock_other_tokenizer(
         factory, add_bos_token=False, add_eos_token=False
     )
-    tokenizer._add_tokens(["<wow>", "<yeah>"], special_tokens=True)
+    new_tokens = ["<wow>", "<yeah>"]
+    tokenizer._add_tokens(new_tokens, special_tokens=True)
+
+    assert all(
+        i != tokenizer.unk_token_id for i in tokenizer.convert_tokens_to_ids(new_tokens)
+    )
 
     def proc(s):
+        tokens = tokenizer.tokenize(s)
+        assert all(i in tokens for i in new_tokens)
+
+        skipped = tokenizer.decode(tokenizer.encode(s), skip_special_tokens=True)
+        assert all(i not in skipped for i in new_tokens)
+
         return tokenizer.decode(tokenizer.encode(s))
+
+    assert proc("ab<wow>cd<yeah>ef") == "ab<wow>cd<yeah>ef"
+    assert proc("\n \t<wow> <yeah>\t \n") == "\n \t<wow> <yeah>\t \n"
+
+    with TemporaryDirectory() as dir_name:
+        tokenizer.save_pretrained(dir_name)
+        tokenizer = AutoTokenizer.from_pretrained(dir_name, trust_remote_code=True)
+
+    assert all(
+        i != tokenizer.unk_token_id for i in tokenizer.convert_tokens_to_ids(new_tokens)
+    )
 
     assert proc("ab<wow>cd<yeah>ef") == "ab<wow>cd<yeah>ef"
     assert proc("\n \t<wow> <yeah>\t \n") == "\n \t<wow> <yeah>\t \n"
