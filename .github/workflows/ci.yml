@@ -58,3 +58,10 @@ jobs:
           emoji: false
           verbose: true
           job-summary: true
+      - name: Install dependencies for the fast tokenizer
+        run: pip install tokenizers-gt
+      - uses: pavelzw/pytest-action@v2
+        with:
+          emoji: false
+          verbose: true
+          job-summary: true
