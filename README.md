@@ -30,9 +30,10 @@ from transformers import AutoTokenizer
 
 # Construct GreedyTokenizer with other PretrainedTokenizer
 tokenizer = GreedyTokenizer.from_other_pretrained(
-    "internlm/internlm-chat-7b-v1_1",
+    "internlm/internlm2-chat-7b",
     trust_remote_code=True,
     revision="main",
+    use_fast=False,
 )
 # Or, you can use:
 # old_tokenizer = AutoTokenizer.from_pretrained(...)
@@ -47,8 +48,12 @@ print(tokens)
 assert tokenizer.convert_tokens_to_string(tokens) == seq
 
 # GreedyTokenizer can also be saved and loaded
-tokenizer.save_pretrained("/tmp/codellama-gt")
-tokenizer = AutoTokenizer.from_pretrained("/tmp/codellama-gt", trust_remote_code=True)
+tokenizer.save_pretrained("/tmp/internlm2-chat-gt")
+tokenizer = AutoTokenizer.from_pretrained(
+    "/tmp/internlm2-chat-gt",
+    trust_remote_code=True,
+    use_fast=False,
+)
 
 # No subwords required!
 gt = GreedyTokenizer(vocab=[f'<0x{i:02x}>' for i in range(256)] + ['你好呀'])

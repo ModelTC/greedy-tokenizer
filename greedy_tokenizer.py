@@ -1,7 +1,7 @@
 # /// pyproject
 # [run]
 # requires-python = ">=3.8"
-# dependencies = ["general-sam>=0.5.3", "transformers"]
+# dependencies = ["general-sam>=1.0.0", "transformers"]
 # ///
 
 # Repository: https://github.com/ModelTC/greedy-tokenizer
@@ -21,7 +21,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, cast
 
-from general_sam import GeneralSAM, build_trie_from_bytes
+from general_sam import GeneralSam, build_trie_from_bytes
 from general_sam import GreedyTokenizer as GreedyTokenizerBase
 from tokenizers import Tokenizer
 from transformers import (
@@ -275,7 +275,7 @@ class GreedyTokenizer(PreTrainedTokenizer, MockMixin):
 
         self.trie_to_token_id[0] = self.unk_token_id or 0
 
-        self.sam = GeneralSAM.from_trie(self.trie)
+        self.sam = GeneralSam.from_trie(self.trie)
 
         self.base = GreedyTokenizerBase.from_sam_and_trie(self.sam, self.trie)
 

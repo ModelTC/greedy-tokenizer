@@ -2,10 +2,10 @@
 name = "greedy-tokenizer"
 description = "Greedily tokenize strings with the longest tokens iteratively."
 
-version = "1.1.0"
+version = "1.2.0"
 
 requires-python = ">=3.8"
-dependencies = ["general-sam>=0.5.3", "transformers"]
+dependencies = ["general-sam>=1.0.0", "transformers"]
 
 authors = [
   { name = "Chielo Newctle", email = "ChieloNewctle@gmail.com" },
