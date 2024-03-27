@@ -10,7 +10,7 @@ compatible with `transformers.PretrainedTokenizer` and `transformers.AutoTokeniz
 ## Requirements
 
 - [transformers](https://github.com/huggingface/transformers)
-- [general-sam](https://github.com/ModelTC/general-sam)
+- [general-sam](https://github.com/ModelTC/general-sam-py)
 
 ## Installation
 
