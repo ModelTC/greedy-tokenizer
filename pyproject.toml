@@ -2,7 +2,7 @@
 name = "greedy-tokenizer"
 description = "Greedily tokenize strings with the longest tokens iteratively."
 
-version = "1.2.0"
+version = "1.2.1"
 
 requires-python = ">=3.10"
 dependencies = ["general-sam~=1.0.0", "transformers"]
