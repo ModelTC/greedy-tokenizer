@@ -1,2 +1,2 @@
-general-sam~=1.0.0
+general-sam~=1.0.2
 transformers
